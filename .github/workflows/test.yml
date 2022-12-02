@@ -9,7 +9,7 @@ jobs:
       fail-fast: false
       matrix:
         os:             [ubuntu-latest]
-        nim-channel:    [stable, devel]
+        nim-channel:    [devel]
 
     name: ${{ matrix.os }}-${{ matrix.nim-channel }}
     runs-on: ${{ matrix.os }}
@@ -24,5 +24,13 @@ jobs:
     - name: Test
       shell: bash
       run: |
+        sudo apt-get install gcc-multilib # Support for 32bits
+        clang --version
+        # For some reason wasm-ld is not in PATH, so add it. llvm version should probably match that of clang
+        export PATH=$PATH:/usr/lib/llvm-11/bin
+
+        curl https://get.wasmer.io -sSfL | sh
+        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/.wasmer/lib
+
         nim --version
         nimble test
