@@ -16,11 +16,10 @@ proc test() =
   """
 
   # let wasmBytes = wat2wasm(watString)
-  let wasmBytes = newVec(readFile(getAppDir() & "/wasm/t_wasm1.wasm"))
-  let e = newEngine()
-  let store = newStore(e)
+  let wasmBytes = readFile(getAppDir() & "/wasm/t_wasm1.wasm")
+  let engine = newEngine()
+  let store = engine.newStore()
   let module = newModule(store, wasmBytes)
-  wasmBytes.delete()
   if module.isNil:
     raise newException(ValueError, "Error compiling wasm")
 

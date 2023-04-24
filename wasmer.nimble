@@ -16,7 +16,7 @@ proc compileWasm(name: string) =
   if findExe("wasm-opt") != "":
     exec "wasm-opt -Oz --zero-filled-memory --strip-producers " & f & ".unoptimized.wasm -o " & f & ".wasm"
   else:
-    echo "wasm-opt not found, wasm will not be optimized"
+    echo "wasm-opt not found, wasm will not be optimized, wasm-opt is part of binaryen or emscripten"
     cpFile(f & ".unoptimized.wasm", f & ".wasm")
 
 proc runTest(name: string) =

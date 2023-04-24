@@ -130,7 +130,9 @@ proc new*[T](v: var Vec[T], d: openarray[T]) {.inline.} =
 proc newVec*[T](v: openarray[T]): Vec[T] {.inline.} = result.new(v)
 proc newVec*(v: string): Vec[byte] {.inline.} = result.new(cast[seq[byte]](v))
 proc unsafeVec[T](o: openarray[T]): Vec[T] {.inline.} =
-  Vec[T](size: o.len.csize_t, data: cast[ptr UncheckedArray[T]](addr o))
+  Vec[T](size: o.len.csize_t, data: (if o.len == 0: nil else: cast[ptr UncheckedArray[T]](addr o)))
+proc unsafeByteVec(o: string): Vec[byte] {.inline.} =
+  Vec[byte](size: o.len.csize_t, data: (if o.len == 0: nil else: cast[ptr UncheckedArray[byte]](addr o[0])))
 
 proc wasm_functype_new(p, r: ptr Vec[ValType]): FuncType {.lib.}
 proc wasm_functype_params(f: FuncType): ptr Vec[ValType] {.lib.}
@@ -173,6 +175,7 @@ proc wasm_module_new(s: Store, b: ptr Vec[byte]): Module {.lib.}
 
 proc newModule*(s: Store, v: Vec[byte]): Module {.inline.} = wasm_module_new(s, addr v)
 proc newModule*(s: Store, v: openarray[byte]): Module {.inline.} = newModule(s, unsafeVec(v))
+proc newModule*(s: Store, v: string): Module {.inline.} = newModule(s, unsafeByteVec(v))
 
 proc wasm_module_validate(s: Store, b: ptr Vec[byte]): bool {.lib.}
 proc validateModule*(s: Store, b: Vec[byte]): bool {.inline.} =
@@ -196,7 +199,7 @@ proc deserializeModule*(s: Store, b: Vec[byte]): Module {.inline.} = wasm_module
 proc wat2wasm(wat: ptr Vec[byte], wasm: var Vec[byte]) {.lib.}
 proc wat2wasm*(wat: Vec[byte]): Vec[byte] {.inline.} = wat2wasm(addr wat, result)
 proc wat2wasm*(wat: string): Vec[byte] {.inline.} =
-  var v = Vec[byte](size: wat.len.csize_t, data: cast[ptr UncheckedArray[byte]](addr wat[0]))
+  var v = unsafeByteVec(wat)
   wat2wasm(addr v, result)
 
 proc wasm_config_new(): Config {.lib.}
