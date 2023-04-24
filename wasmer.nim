@@ -1,4 +1,4 @@
-import macros
+import macros, tables
 
 {.pragma: lib, importc, dynlib: "libwasmer.so".}
 
@@ -96,6 +96,8 @@ proc wasm_importtype_module(i: ImportType): ptr Vec[byte] {.lib.}
 proc wasm_importtype_name(i: ImportType): ptr Vec[byte] {.lib.}
 proc typ*(i: ImportType): ExternType {.lib, importc: "wasm_importtype_type".}
 
+proc wasm_exporttype_name(i: ExportType): ptr Vec[byte] {.lib.}
+proc typ*(i: ExportType): ExternType {.lib, importc: "wasm_exporttype_type".}
 
 proc toString(b: Vec[byte]): string =
   let sz = b.size.int
@@ -106,10 +108,13 @@ proc toString(b: Vec[byte]): string =
 proc name*(i: ImportType): string = wasm_importtype_name(i)[].toString()
 proc module*(i: ImportType): string = wasm_importtype_module(i)[].toString()
 
+proc name*(i: ExportType): string = wasm_exporttype_name(i)[].toString()
+
 declareArray(byte, "byte")
 declareArray(Extern, "extern")
 declareArray(Val, "val")
 declareArray(ImportType, "importtype")
+declareArray(ExportType, "exporttype")
 declareArray(ValType, "valtype")
 
 proc delete*(v: Vec) {.inline.} = wasm_vec_delete(addr v)
@@ -175,6 +180,9 @@ proc validateModule*(s: Store, b: Vec[byte]): bool {.inline.} =
 proc wasm_module_imports(m: Module, r: var Vec[ImportType]) {.lib.}
 proc imports*(m: Module): Vec[ImportType] {.inline.} =
   wasm_module_imports(m, result)
+proc wasm_module_exports(m: Module, r: var Vec[ExportType]) {.lib.}
+proc exports*(m: Module): Vec[ExportType] {.inline.} =
+  wasm_module_exports(m, result)
 # WASM_API_EXTERN void wasm_module_exports(const wasm_module_t*, own wasm_exporttype_vec_t* out);
 
 proc wasm_module_serialize(m: Module, b: var Vec[byte]) {.lib.}
@@ -206,6 +214,13 @@ proc newInstance*(s: Store, m: Module, imports: Vec[Extern], t: ptr Trap = nil):
 proc newInstance*(s: Store, m: Module, imports: openarray[Extern], t: ptr Trap = nil): Instance {.inline.} =
   var v = Vec[Extern](size: imports.len.csize_t, data: cast[ptr UncheckedArray[Extern]](addr imports))
   wasm_instance_new(s, m, addr v, t)
+
+proc newInstance*(s: Store, m: Module, imports: TableRef[string, Extern], t: ptr Trap = nil): Instance {.inline.} =
+  let importedObjects = m.imports
+  var importsArray = newSeq[Extern](importedObjects.len)
+  for i, im in importedObjects:
+    importsArray[i] = imports[im.name]
+  newInstance(s, m, importsArray, t)
 
 proc wasm_instance_exports(i: Instance, e: var Vec[Extern]) {.lib.}
 proc exports*(i: Instance): Vec[Extern] {.inline.} =
@@ -291,7 +306,7 @@ template thunkBody(call: untyped, results: ptr Vec[Val]) =
       if results[].len > 0:
         set(results.data[0], r)
 
-macro newFunc*(s: Store, c: proc): untyped =
+macro newFuncWithoutEnvAux(s: Store, c: proc): untyped =
   let t = getType(c)
   let thunkName = genSym(nskProc, "thunk")
 
@@ -314,4 +329,103 @@ macro newFunc*(s: Store, c: proc): untyped =
 
     newFuncConsumingType(`s`, newFuncType(`paramTypeArray`, `retTypeArray`), `thunkName`)
 
+type
+  ClosureWrapper[T] = ref object
+    c: T
+
+proc finalizeCW[T](e: pointer) {.cdecl.} =
+  let e = cast[ClosureWrapper[T]](e)
+  GC_unref(e)
+
+proc newFuncConsumingType[T](s: Store, typ: FuncType, c: FuncCallbackWithEnv, p: T): Func =
+  let cw = ClosureWrapper[T](c: p)
+  GC_ref(cw)
+  result = newFunc(s, typ, c, cast[pointer](cw), finalizeCW[T])
+  typ.delete()
+
+macro newFuncWithEnvAux(s: Store, c: proc): untyped =
+  let t = getType(c)
+  let thunkName = genSym(nskProc, "thunk")
+
+  let envIdent = ident"env"
+  let paramsIdent = ident"params"
+  let call = newCall(newDotExpr(envIdent, ident"c"))
+  let paramTypeArray = newNimNode(nnkBracket)
+  for i in 2 ..< t.len:
+    let tt = newCall("typeof", t[i])
+    call.add(newCall(bindSym"getThunkArg", paramsIdent, newLit(i - 2), tt))
+    paramTypeArray.add(newCall(bindSym"newValType", tt))
+
+  let retTypeArray = newNimNode(nnkBracket)
+  let retType = t[1]
+  if $retType != "void":
+    retTypeArray.add(newCall(bindSym"newValType", newCall("typeof", retType)))
+
+  result = quote do:
+    type CBType = typeof(`c`)
+    proc `thunkName`(`envIdent`: pointer, `paramsIdent`, results: ptr Vec[Val]): Trap {.cdecl.} =
+      let `envIdent` = cast[ClosureWrapper[CBType]](`envIdent`)
+      thunkBody(`call`, results)
+
+    newFuncConsumingType(`s`, newFuncType(`paramTypeArray`, `retTypeArray`), `thunkName`, `c`)
+
+proc newFunc*(s: Store, c: proc): Func =
+  newFuncWithEnvAux(s, c)
+
 proc asExtern*(f: Func): Extern {.lib, importc: "wasm_func_as_extern"}
+
+template makeImportsAux(imports: varargs[(string, Extern)]): TableRef[string, Extern] =
+  imports.newTable()
+
+proc makeImportFuncAux(store: Store, name: string, cb: proc): (string, Extern) =
+  (name, newFunc(store, cb).asExtern)
+
+macro makeImports*(store: Store, imports: untyped{nkTableConstr}): untyped =
+  result = newCall(bindSym"makeImportsAux")
+  for n in imports:
+    n.expectKind(nnkExprColonExpr)
+    result.add(newCall(bindSym"makeImportFuncAux", `store`, n[0], n[1]))
+
+proc getExport*(instance: Instance, module: Module, name: string): Extern =
+  let et = module.exports()
+  for i, e in et:
+    if e.name == name:
+      return instance.exports()[i]
+
+proc toArg[T](v: T): Val {.inline.} =
+  result.set(v)
+
+template setResult(v: untyped) =
+  when result isnot (proc):
+    result = get(v, typeof(result))
+
+proc raiseTrap(t: Trap) =
+  raise newException(ValueError, "Wasm trap")
+
+macro makeExportWrapper(procType: typedesc, f: untyped): untyped =
+  let argsArray = newNimNode(nnkBracket)
+  let ty = getTypeImpl(procType)
+  ty.expectKind(nnkBracketExpr)
+  ty[1].expectKind(nnkProcTy)
+  let srcParams = ty[1][0]
+  var params: seq[NimNode]
+  params.add(srcParams[0])
+  for i, name, typ, _ in arguments(srcParams):
+    let id = ident("arg" & $i)
+    params.add newIdentDefs(id, typ)
+    argsArray.add(newCall(bindSym"toArg", id))
+
+  let body = quote do:
+    var r: Val
+    let t = `f`.call(`argsArray`, r)
+    if not t.isNil:
+      raiseTrap(t)
+    setResult(r)
+
+  result = newProc(params = params, procType = nnkLambda, body = body)
+
+proc getExport*(instance: Instance, module: Module, name: string, procType: typedesc): procType =
+  let e = instance.getExport(module, name)
+  if not e.isNil:
+    let f = e.asFunc()
+    result = makeExportWrapper(procType, f)

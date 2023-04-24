@@ -12,6 +12,7 @@ macro exportwasm*(p: untyped): untyped =
   result.addPragma(newColonExpr(newIdentNode("codegenDecl"), newLit(cgenDecl)))
 
 proc importedFunc(a: int): int {.importc.}
+proc importedFunc2(a: int): int {.importc.}
 
 proc sum(a, b: int): int {.exportwasm.} =
-  a + importedFunc(b)
+  a + importedFunc(b) + importedFunc2(b)

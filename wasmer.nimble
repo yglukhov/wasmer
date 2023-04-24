@@ -2,7 +2,7 @@
 
 version       = "0.1.0"
 author        = "Yuriy Glukhov"
-description   = "Embed wasm in nim"
+description   = "Wasmer wrapper - embed wasm in nim"
 license       = "MIT"
 
 
