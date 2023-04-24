@@ -129,6 +129,8 @@ proc new*[T](v: var Vec[T], d: openarray[T]) {.inline.} =
 
 proc newVec*[T](v: openarray[T]): Vec[T] {.inline.} = result.new(v)
 proc newVec*(v: string): Vec[byte] {.inline.} = result.new(cast[seq[byte]](v))
+proc unsafeVec[T](o: openarray[T]): Vec[T] {.inline.} =
+  Vec[T](size: o.len.csize_t, data: cast[ptr UncheckedArray[T]](addr o))
 
 proc wasm_functype_new(p, r: ptr Vec[ValType]): FuncType {.lib.}
 proc wasm_functype_params(f: FuncType): ptr Vec[ValType] {.lib.}
@@ -169,8 +171,8 @@ proc `$`*(f: FuncType): string =
 
 proc wasm_module_new(s: Store, b: ptr Vec[byte]): Module {.lib.}
 
-proc newModule*(s: Store, v: Vec[byte]): Module {.inline.} =
-  wasm_module_new(s, addr v)
+proc newModule*(s: Store, v: Vec[byte]): Module {.inline.} = wasm_module_new(s, addr v)
+proc newModule*(s: Store, v: openarray[byte]): Module {.inline.} = newModule(s, unsafeVec(v))
 
 proc wasm_module_validate(s: Store, b: ptr Vec[byte]): bool {.lib.}
 proc validateModule*(s: Store, b: Vec[byte]): bool {.inline.} =
@@ -200,8 +202,7 @@ proc wat2wasm*(wat: string): Vec[byte] {.inline.} =
 proc wasm_config_new(): Config {.lib.}
 proc newConfig*(): Config {.inline.} = wasm_config_new()
 
-proc wasm_engine_new_with_config(c: Config): Engine {.lib.}
-proc newEngine*(c: Config): Engine {.inline.} = wasm_engine_new_with_config(c)
+proc newEngine*(c: Config): Engine {.lib, importc: "wasm_engine_new_with_config".}
 proc newEngine*(): Engine {.inline.} = newEngine(newConfig())
 
 proc wasm_store_new(e: Engine): Store {.lib.}
@@ -212,7 +213,7 @@ proc newInstance*(s: Store, m: Module, imports: Vec[Extern], t: ptr Trap = nil):
   wasm_instance_new(s, m, addr imports, t)
 
 proc newInstance*(s: Store, m: Module, imports: openarray[Extern], t: ptr Trap = nil): Instance {.inline.} =
-  var v = Vec[Extern](size: imports.len.csize_t, data: cast[ptr UncheckedArray[Extern]](addr imports))
+  var v = unsafeVec(imports)
   wasm_instance_new(s, m, addr v, t)
 
 proc newInstance*(s: Store, m: Module, imports: TableRef[string, Extern], t: ptr Trap = nil): Instance {.inline.} =
@@ -247,12 +248,12 @@ proc call*(f: Func, args: Vec[Val], results: var Vec[Val]): Trap {.inline.} =
   wasm_func_call(f, addr args, results)
 
 proc call*(f: Func, args: openarray[Val], results: var openarray[Val]): Trap {.inline.} =
-  var argss = Vec[Val](size: args.len.csize_t, data: cast[ptr UncheckedArray[Val]](addr args))
-  var resultss = Vec[Val](size: results.len.csize_t, data: cast[ptr UncheckedArray[Val]](addr results))
+  var argss = unsafeVec(args)
+  var resultss = unsafeVec(results)
   wasm_func_call(f, addr argss, resultss)
 
 proc call*(f: Func, args: openarray[Val], results: var Val): Trap {.inline.} =
-  var argss = Vec[Val](size: args.len.csize_t, data: cast[ptr UncheckedArray[Val]](addr args))
+  var argss = unsafeVec(args)
   var resultss = Vec[Val](size: 1, data: cast[ptr UncheckedArray[Val]](addr results))
   wasm_func_call(f, addr argss, resultss)
 
@@ -289,7 +290,7 @@ proc set[T](v: var Val, d: T) =
     v = vali64(d)
   elif T is float32:
     v = valf32(d)
-  elif T is float64:
+  elif (T is float64) or (T is float):
     v = valf64(d)
   else:
     {.error: "Unknown param type".}
@@ -306,28 +307,28 @@ template thunkBody(call: untyped, results: ptr Vec[Val]) =
       if results[].len > 0:
         set(results.data[0], r)
 
-macro newFuncWithoutEnvAux(s: Store, c: proc): untyped =
-  let t = getType(c)
-  let thunkName = genSym(nskProc, "thunk")
+# macro newFuncWithoutEnvAux(s: Store, c: proc): untyped =
+#   let t = getType(c)
+#   let thunkName = genSym(nskProc, "thunk")
 
-  let paramsIdent = ident"params"
-  let call = newCall(c)
-  let paramTypeArray = newNimNode(nnkBracket)
-  for i in 2 ..< t.len:
-    let tt = newCall("typeof", t[i])
-    call.add(newCall(bindSym"getThunkArg", paramsIdent, newLit(i - 2), tt))
-    paramTypeArray.add(newCall(bindSym"newValType", tt))
+#   let paramsIdent = ident"params"
+#   let call = newCall(c)
+#   let paramTypeArray = newNimNode(nnkBracket)
+#   for i in 2 ..< t.len:
+#     let tt = newCall("typeof", t[i])
+#     call.add(newCall(bindSym"getThunkArg", paramsIdent, newLit(i - 2), tt))
+#     paramTypeArray.add(newCall(bindSym"newValType", tt))
 
-  let retTypeArray = newNimNode(nnkBracket)
-  let retType = t[1]
-  if $retType != "void":
-    retTypeArray.add(newCall(bindSym"newValType", newCall("typeof", retType)))
+#   let retTypeArray = newNimNode(nnkBracket)
+#   let retType = t[1]
+#   if $retType != "void":
+#     retTypeArray.add(newCall(bindSym"newValType", newCall("typeof", retType)))
 
-  result = quote do:
-    proc `thunkName`(`paramsIdent`, results: ptr Vec[Val]): Trap {.cdecl.} =
-      thunkBody(`call`, results)
+#   result = quote do:
+#     proc `thunkName`(`paramsIdent`, results: ptr Vec[Val]): Trap {.cdecl.} =
+#       thunkBody(`call`, results)
 
-    newFuncConsumingType(`s`, newFuncType(`paramTypeArray`, `retTypeArray`), `thunkName`)
+#     newFuncConsumingType(`s`, newFuncType(`paramTypeArray`, `retTypeArray`), `thunkName`)
 
 type
   ClosureWrapper[T] = ref object
