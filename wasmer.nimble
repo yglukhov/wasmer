@@ -8,7 +8,7 @@ license       = "MIT"
 
 # Dependencies
 
-requires "nim >= 1.7.3"
+requires "nim >= 1.6.14"
 
 proc compileWasm(name: string) =
   let f = "tests/wasm/" & name

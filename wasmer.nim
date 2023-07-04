@@ -20,6 +20,7 @@ type
   ExternType* = ptr object
   FuncType* = ptr object
   ValType* = ptr object
+  Memory* = ptr object
 
   FuncCallback* = proc(args, results: ptr Vec[Val]): Trap {.cdecl.}
   FuncCallbackWithEnv* = proc(env: pointer, args, results: ptr Vec[Val]): Trap {.cdecl.}
@@ -232,6 +233,13 @@ proc exports*(i: Instance): Vec[Extern] {.inline.} =
 
 proc wasm_extern_as_func(e: Extern): Func {.lib.}
 proc asFunc*(e: Extern): Func {.inline.} = wasm_extern_as_func(e)
+proc wasm_extern_as_memory(e: Extern): Memory {.lib.}
+proc asMemory*(e: Extern): Memory {.inline.} = wasm_extern_as_memory(e)
+
+proc wasm_memory_data(e: Memory): pointer {.lib.}
+proc data*(e: Memory): pointer {.inline.} = wasm_memory_data(e)
+proc wasm_memory_data_size(e: Memory): csize_t {.lib.}
+proc dataSize*(e: Memory): int {.inline.} = wasm_memory_data_size(e).int
 
 proc newFunc*(s: Store, typ: FuncType, c: FuncCallback): Func {.lib, importc: "wasm_func_new".}
 proc newFunc*(s: Store, typ: FuncType, c: FuncCallbackWithEnv, env: pointer, f: proc(p: pointer){.cdecl.}): Func {.lib, importc: "wasm_func_new_with_env".}
