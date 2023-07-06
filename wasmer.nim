@@ -1,6 +1,9 @@
 import macros, tables
 
-{.pragma: lib, importc, dynlib: "libwasmer.so".}
+when defined(windows):
+  {.pragma: lib, importc, dynlib: "wasmer.dll".}
+else:
+  {.pragma: lib, importc, dynlib: "libwasmer.so".}
 
 type
   Module* = ptr object
