@@ -227,6 +227,9 @@ proc newInstance*(s: Store, m: Module, imports: TableRef[string, Extern], t: ptr
     importsArray[i] = imports[im.name]
   newInstance(s, m, importsArray, t)
 
+proc newInstance*(s: Store, m: Module, imports: TableRef[string, Extern], t: var Trap): Instance {.inline.} =
+  newInstance(s, m, imports, addr t)
+
 proc wasm_instance_exports(i: Instance, e: var Vec[Extern]) {.lib.}
 proc exports*(i: Instance): Vec[Extern] {.inline.} =
   wasm_instance_exports(i, result)
@@ -240,6 +243,13 @@ proc wasm_memory_data(e: Memory): pointer {.lib.}
 proc data*(e: Memory): pointer {.inline.} = wasm_memory_data(e)
 proc wasm_memory_data_size(e: Memory): csize_t {.lib.}
 proc dataSize*(e: Memory): int {.inline.} = wasm_memory_data_size(e).int
+
+proc wasm_trap_message(e: Trap, msg: var Vec[byte]) {.lib.}
+proc message*(e: Trap): string =
+  var msg: Vec[byte]
+  wasm_trap_message(e, msg)
+  result = msg.toString()
+  msg.delete()
 
 proc newFunc*(s: Store, typ: FuncType, c: FuncCallback): Func {.lib, importc: "wasm_func_new".}
 proc newFunc*(s: Store, typ: FuncType, c: FuncCallbackWithEnv, env: pointer, f: proc(p: pointer){.cdecl.}): Func {.lib, importc: "wasm_func_new_with_env".}
